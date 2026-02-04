@@ -177,7 +177,7 @@ function FeedbackModal({ onClose }) {
     }
     
     // Web3Forms Access Key
-    formData.append("access_key", "c390fbb1-77e0-4aab-a939-caa75edc7319");
+    formData.append("access_key", "404467f9-f158-4504-9c63-b25fd02baec8");
     formData.append("subject", "基基宝 - 用户反馈");
 
     try {
