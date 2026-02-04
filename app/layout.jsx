@@ -2,7 +2,7 @@ import Script from 'next/script';
 import './globals.css';
 
 export const metadata = {
-  title: '基估宝',
+  title: '基基宝',
   description: '输入基金编号添加基金，实时显示估值与前10重仓'
 };
 

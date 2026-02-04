@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import Announcement from "./components/Announcement";
 
@@ -118,6 +118,25 @@ function StarIcon({ filled, ...props }) {
   );
 }
 
+function WalletIcon(props) {
+  return (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+      <rect x="3" y="6" width="18" height="13" rx="2" stroke="currentColor" strokeWidth="2" />
+      <path d="M3 10h18" stroke="currentColor" strokeWidth="2" />
+      <circle cx="16" cy="14" r="1" fill="currentColor" />
+    </svg>
+  );
+}
+
+function ChartIcon(props) {
+  return (
+    <svg {...props} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none">
+      <path d="M3 3v18h18" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M7 14l4-4 4 4 5-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
 function Stat({ label, value, delta }) {
   const dir = delta > 0 ? 'up' : delta < 0 ? 'down' : '';
   return (
@@ -126,6 +145,19 @@ function Stat({ label, value, delta }) {
       <span className={`value ${dir}`}>{value}</span>
     </div>
   );
+}
+
+// 计算当日收益
+function calculateDailyProfit(position, changeRate) {
+  if (!position || position <= 0 || typeof changeRate !== 'number') return null;
+  return position * (changeRate / 100);
+}
+
+// 格式化金额显示
+function formatMoney(amount, showSign = true) {
+  if (amount === null || amount === undefined || !Number.isFinite(amount)) return '—';
+  const sign = showSign && amount > 0 ? '+' : '';
+  return `${sign}¥${Math.abs(amount).toLocaleString('zh-CN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 }
 
 function FeedbackModal({ onClose }) {
@@ -146,7 +178,7 @@ function FeedbackModal({ onClose }) {
     
     // Web3Forms Access Key
     formData.append("access_key", "c390fbb1-77e0-4aab-a939-caa75edc7319");
-    formData.append("subject", "基估宝 - 用户反馈");
+    formData.append("subject", "基基宝 - 用户反馈");
 
     try {
       const response = await fetch("https://api.web3forms.com/submit", {
@@ -713,6 +745,161 @@ function GroupModal({ onClose, onConfirm }) {
   );
 }
 
+function PositionModal({ fund, currentPosition, onClose, onSave }) {
+  const [amount, setAmount] = useState(currentPosition > 0 ? String(currentPosition) : '');
+
+  const handleSave = () => {
+    const value = parseFloat(amount) || 0;
+    onSave(fund.code, value);
+    onClose();
+  };
+
+  return (
+    <motion.div
+      className="modal-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-label="设置持仓"
+      onClick={onClose}
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.95, y: 20 }}
+        className="glass card modal position-modal"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="title" style={{ marginBottom: 20, justifyContent: 'space-between' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <WalletIcon width="20" height="20" />
+            <span>设置持仓金额</span>
+          </div>
+          <button className="icon-button" onClick={onClose} style={{ border: 'none', background: 'transparent' }}>
+            <CloseIcon width="20" height="20" />
+          </button>
+        </div>
+
+        <div className="fund-display">
+          <div className="fund-name">{fund.name}</div>
+          <div className="fund-code">#{fund.code}</div>
+        </div>
+
+        <div className="form-group" style={{ marginBottom: 20 }}>
+          <label className="muted" style={{ display: 'block', marginBottom: 8, fontSize: '14px' }}>
+            持仓金额（元）
+          </label>
+          <div className="position-input-group">
+            <span className="currency-symbol">¥</span>
+            <input
+              className="input"
+              type="number"
+              min="0"
+              step="100"
+              autoFocus
+              placeholder="请输入持仓金额..."
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') handleSave();
+              }}
+            />
+          </div>
+          <div className="muted" style={{ marginTop: 8, fontSize: '12px' }}>
+            设置为 0 或留空将清除该基金的持仓记录
+          </div>
+        </div>
+
+        <div className="row" style={{ gap: 12 }}>
+          <button 
+            className="button secondary" 
+            onClick={onClose} 
+            style={{ flex: 1, background: 'rgba(255,255,255,0.05)', color: 'var(--text)' }}
+          >
+            取消
+          </button>
+          <button className="button" onClick={handleSave} style={{ flex: 1 }}>
+            确定
+          </button>
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+function PortfolioSummary({ funds, positions }) {
+  // 计算汇总数据
+  const summary = useMemo(() => {
+    let totalAssets = 0;
+    let totalProfit = 0;
+    let fundCount = 0;
+
+    funds.forEach(f => {
+      const position = positions[f.code];
+      if (position && position > 0) {
+        totalAssets += position;
+        fundCount++;
+        
+        // 获取涨跌幅
+        const changeRate = f.estPricedCoverage > 0.05 ? f.estGszzl : (Number(f.gszzl) || 0);
+        const profit = calculateDailyProfit(position, changeRate);
+        if (profit !== null) {
+          totalProfit += profit;
+        }
+      }
+    });
+
+    const totalProfitRate = totalAssets > 0 ? (totalProfit / totalAssets) * 100 : 0;
+
+    return { totalAssets, totalProfit, totalProfitRate, fundCount };
+  }, [funds, positions]);
+
+  // 如果没有设置任何持仓，不显示
+  if (summary.fundCount === 0) {
+    return null;
+  }
+
+  const profitDir = summary.totalProfit > 0 ? 'up' : summary.totalProfit < 0 ? 'down' : '';
+
+  return (
+    <div className="col-12 glass card portfolio-summary">
+      <div className="summary-item">
+        <span className="summary-label">
+          <ChartIcon width="14" height="14" />
+          总资产
+        </span>
+        <span className="summary-value">
+          {formatMoney(summary.totalAssets, false)}
+        </span>
+      </div>
+      <div className="summary-item">
+        <span className="summary-label">
+          <WalletIcon width="14" height="14" />
+          当日收益
+        </span>
+        <span className={`summary-value ${profitDir}`}>
+          {formatMoney(summary.totalProfit, true)}
+        </span>
+        <span className={`summary-sub ${profitDir}`}>
+          {summary.totalProfitRate > 0 ? '+' : ''}{summary.totalProfitRate.toFixed(2)}%
+        </span>
+      </div>
+      <div className="summary-item">
+        <span className="summary-label">
+          <StarIcon width="14" height="14" />
+          已设持仓
+        </span>
+        <span className="summary-value" style={{ color: 'var(--primary)' }}>
+          {summary.fundCount}
+        </span>
+        <span className="summary-sub">只基金</span>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [funds, setFunds] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -761,6 +948,11 @@ export default function HomePage() {
   const [addResultOpen, setAddResultOpen] = useState(false);
   const [addFailures, setAddFailures] = useState([]);
   const tabsRef = useRef(null);
+
+  // 持仓相关状态
+  const [positions, setPositions] = useState({});
+  const [positionModalOpen, setPositionModalOpen] = useState(false);
+  const [editingFundCode, setEditingFundCode] = useState(null);
 
   // 过滤和排序后的基金列表
   const displayFunds = funds
@@ -953,6 +1145,26 @@ export default function HomePage() {
     localStorage.setItem('groups', JSON.stringify(next));
   };
 
+  // 更新持仓金额
+  const updatePosition = (code, amount) => {
+    setPositions(prev => {
+      const next = { ...prev };
+      if (amount > 0) {
+        next[code] = amount;
+      } else {
+        delete next[code];
+      }
+      localStorage.setItem('positions', JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // 打开持仓设置弹窗
+  const openPositionModal = (code) => {
+    setEditingFundCode(code);
+    setPositionModalOpen(true);
+  };
+
   // 按 code 去重，保留第一次出现的项，避免列表重复
   const dedupeByCode = (list) => {
     const seen = new Set();
@@ -998,6 +1210,11 @@ export default function HomePage() {
       const savedViewMode = localStorage.getItem('viewMode');
       if (savedViewMode === 'card' || savedViewMode === 'list') {
         setViewMode(savedViewMode);
+      }
+      // 加载持仓数据
+      const savedPositions = JSON.parse(localStorage.getItem('positions') || '{}');
+      if (savedPositions && typeof savedPositions === 'object') {
+        setPositions(savedPositions);
       }
     } catch {}
   }, []);
@@ -1373,6 +1590,15 @@ export default function HomePage() {
       if (nextSet.size === 0) setCurrentTab('all');
       return nextSet;
     });
+
+    // 同步删除持仓数据
+    setPositions(prev => {
+      if (!(removeCode in prev)) return prev;
+      const nextPos = { ...prev };
+      delete nextPos[removeCode];
+      localStorage.setItem('positions', JSON.stringify(nextPos));
+      return nextPos;
+    });
   };
 
   const manualRefresh = async () => {
@@ -1401,6 +1627,7 @@ export default function HomePage() {
         favorites: JSON.parse(localStorage.getItem('favorites') || '[]'),
         groups: JSON.parse(localStorage.getItem('groups') || '[]'),
         collapsedCodes: JSON.parse(localStorage.getItem('collapsedCodes') || '[]'),
+        positions: JSON.parse(localStorage.getItem('positions') || '{}'),
         refreshMs: parseInt(localStorage.getItem('refreshMs') || '30000', 10),
         viewMode: localStorage.getItem('viewMode') || 'card',
         exportedAt: new Date().toISOString()
@@ -1499,6 +1726,14 @@ export default function HomePage() {
           localStorage.setItem('collapsedCodes', JSON.stringify(mergedCollapsed));
         }
 
+        // 合并持仓数据
+        if (data.positions && typeof data.positions === 'object') {
+          const currentPositions = JSON.parse(localStorage.getItem('positions') || '{}');
+          const mergedPositions = { ...currentPositions, ...data.positions };
+          setPositions(mergedPositions);
+          localStorage.setItem('positions', JSON.stringify(mergedPositions));
+        }
+
         if (typeof data.refreshMs === 'number' && data.refreshMs >= 5000) {
           setRefreshMs(data.refreshMs);
           setTempSeconds(Math.round(data.refreshMs / 1000));
@@ -1537,6 +1772,7 @@ export default function HomePage() {
       addFundToGroupOpen || 
       groupManageOpen || 
       groupModalOpen || 
+      positionModalOpen ||
       successModal.open;
     
     if (isAnyModalOpen) {
@@ -1548,7 +1784,7 @@ export default function HomePage() {
     return () => {
       document.body.style.overflow = '';
     };
-  }, [settingsOpen, feedbackOpen, addResultOpen, addFundToGroupOpen, groupManageOpen, groupModalOpen, successModal.open]);
+  }, [settingsOpen, feedbackOpen, addResultOpen, addFundToGroupOpen, groupManageOpen, groupModalOpen, positionModalOpen, successModal.open]);
 
   useEffect(() => {
     const onKey = (ev) => {
@@ -1568,7 +1804,7 @@ export default function HomePage() {
             <circle cx="12" cy="12" r="10" stroke="var(--accent)" strokeWidth="2" />
             <path d="M5 14c2-4 7-6 14-5" stroke="var(--primary)" strokeWidth="2" />
           </svg>
-          <span>基估宝</span>
+          <span>基基宝</span>
         </div>
         <div className="actions">
           <div className="badge" title="当前刷新频率">
@@ -1682,6 +1918,8 @@ export default function HomePage() {
 
           {error && <div className="muted" style={{ marginTop: 8, color: 'var(--danger)' }}>{error}</div>}
         </div>
+
+        <PortfolioSummary funds={funds} positions={positions} />
 
         <div className="col-12">
           <div className="filter-bar" style={{ marginBottom: 16, display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 12 }}>
@@ -1894,10 +2132,38 @@ export default function HomePage() {
                                 {f.estPricedCoverage > 0.05 ? `${f.estGszzl > 0 ? '+' : ''}${f.estGszzl.toFixed(2)}%` : (typeof f.gszzl === 'number' ? `${f.gszzl > 0 ? '+' : ''}${f.gszzl.toFixed(2)}%` : f.gszzl ?? '—')}
                               </span>
                             </div>
-                            <div className="table-cell text-right time-cell">
-                              <span className="muted" style={{ fontSize: '12px' }}>{f.gztime || f.time || '-'}</span>
+                            <div className="table-cell text-right profit-cell">
+                              {(() => {
+                                const pos = positions[f.code];
+                                const rate = f.estPricedCoverage > 0.05 ? f.estGszzl : (Number(f.gszzl) || 0);
+                                const profit = calculateDailyProfit(pos, rate);
+                                if (profit !== null) {
+                                  const dir = profit > 0 ? 'up' : profit < 0 ? 'down' : 'neutral';
+                                  return <span className={`profit-display ${dir}`}>{formatMoney(profit)}</span>;
+                                }
+                                return (
+                                  <button
+                                    className="position-btn"
+                                    onClick={() => openPositionModal(f.code)}
+                                    title="设置持仓"
+                                  >
+                                    <WalletIcon width="12" height="12" />
+                                    设置持仓
+                                  </button>
+                                );
+                              })()}
                             </div>
                             <div className="table-cell text-center action-cell" style={{ gap: 4 }}>
+                              {positions[f.code] > 0 && (
+                                <button
+                                  className="icon-button"
+                                  onClick={() => openPositionModal(f.code)}
+                                  title="修改持仓"
+                                  style={{ width: '28px', height: '28px' }}
+                                >
+                                  <WalletIcon width="14" height="14" />
+                                </button>
+                              )}
                               <button
                                 className="icon-button danger"
                                 onClick={() => removeFund(f.code)}
@@ -1973,8 +2239,32 @@ export default function HomePage() {
                               基于 {Math.round(f.estPricedCoverage * 100)}% 持仓估算
                             </div>
                           )}
+                          {/* 持仓收益行 */}
+                          <div className="profit-row">
+                            <div className="profit-info">
+                              <span className="profit-label">当日收益</span>
+                              {(() => {
+                                const pos = positions[f.code];
+                                const rate = f.estPricedCoverage > 0.05 ? f.estGszzl : (Number(f.gszzl) || 0);
+                                const profit = calculateDailyProfit(pos, rate);
+                                if (profit !== null) {
+                                  const dir = profit > 0 ? 'up' : profit < 0 ? 'down' : 'neutral';
+                                  return <span className={`profit-display ${dir}`} style={{ fontSize: '18px' }}>{formatMoney(profit)}</span>;
+                                }
+                                return <span className="muted" style={{ fontSize: '13px' }}>未设置持仓</span>;
+                              })()}
+                            </div>
+                            <button
+                              className={`position-btn ${positions[f.code] > 0 ? 'has-position' : ''}`}
+                              onClick={() => openPositionModal(f.code)}
+                              title={positions[f.code] > 0 ? "修改持仓" : "设置持仓"}
+                            >
+                              <WalletIcon width="14" height="14" />
+                              {positions[f.code] > 0 ? `¥${positions[f.code].toLocaleString()}` : '设置持仓'}
+                            </button>
+                          </div>
                           <div
-                            style={{ marginBottom: 8, cursor: 'pointer', userSelect: 'none' }}
+                            style={{ marginBottom: 8, marginTop: 12, cursor: 'pointer', userSelect: 'none' }}
                             className="title"
                             onClick={() => toggleCollapse(f.code)}
                           >
@@ -2112,6 +2402,20 @@ export default function HomePage() {
           <SuccessModal
             message={successModal.message}
             onClose={() => setSuccessModal({ open: false, message: '' })}
+          />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {positionModalOpen && editingFundCode && (
+          <PositionModal
+            fund={funds.find(f => f.code === editingFundCode) || { code: editingFundCode, name: '' }}
+            currentPosition={positions[editingFundCode] || 0}
+            onClose={() => {
+              setPositionModalOpen(false);
+              setEditingFundCode(null);
+            }}
+            onSave={updatePosition}
           />
         )}
       </AnimatePresence>
